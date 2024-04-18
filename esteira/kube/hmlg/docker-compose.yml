@@ -1,0 +1,12 @@
+version: "3.5"
+
+services:
+  app:
+    container_name: "infopel-front-hmlg"
+    image: "infopel-front-hmlg"
+    restart: unless-stopped
+    build:
+      context: ../../../
+      dockerfile: .docker/node/Dockerfile
+      args:
+        - MODE=hmlg

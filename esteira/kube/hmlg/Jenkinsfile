@@ -1,0 +1,87 @@
+pipeline {
+agent any
+    environment {
+          ACCOUNT_ID="415098517687" // NUMERO DA CONTA AWS
+          CLUSTERNAME="RC-CLUSTER" // NOME DO CLUSTER AWS
+          AWS_REGION="sa-east-1" // REGIAO DO CLUSTER
+          AWS_ROLE_K8S_NAME="k8sAdminRole" // ROLE PERMITIDA CONECTAR NO CLUSTER
+          DOCKER_EXEC="docker exec -t ${BUILD_NUMBER}_${JOB_NAME}_j_kubectl" // linha para executar os stages
+          AMBIENTE= "hmlg" // PROD, prod, DEV
+          APP_NAME= "infopel-front-hmlg" // NOME DA SUA APLICACAO (DEVE SER O MESMO NOME USADO NO CONTAINER)
+          ECR_IMAGE= "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/infopel-front-hmlg" // IMG ERC
+          IMAGE_BUILD_NAME= "${ECR_IMAGE}:jenkins-build-${BUILD_NUMBER}" // NOME DA IMAGEM PARA TAG NO ECR
+          K8S_NAMESPACE= "infopel-${AMBIENTE}" // NAMESPACE DO APP NO KUBECTL
+      }
+    stages {
+        stage("Login ECR")
+        {
+          steps {
+            sh "echo ${ACCOUNT_ID}"
+            sh "echo ${AWS_REGION}"
+            sh "echo ${AMBIENTE}"
+            sh "echo ${APP_NAME}"
+            sh "echo ${ECR_IMAGE}"
+            sh "echo ${IMAGE_BUILD_NAME}"
+            sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          }
+        }
+        stage("Download da imagem do kubectl")
+        {
+          steps {
+            sh "docker pull ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/jenkins_kubectl" // download da imagem pre configurada pro kubectl
+            sh "docker run -d --name ${BUILD_NUMBER}_${JOB_NAME}_j_kubectl ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/jenkins_kubectl" // iniciamos o container
+            /* INICIO DAS CONFIGURACOES DO KUBECTL */
+            sh "${DOCKER_EXEC} aws configure set region ${AWS_REGION} --profile ${AWS_ROLE_K8S_NAME};"
+            sh "${DOCKER_EXEC} aws configure set aws_access_key_id ${K8S_AWS_ACCESS_KEY_ID} --profile ${AWS_ROLE_K8S_NAME};"
+            sh "${DOCKER_EXEC} aws configure set aws_secret_access_key ${K8S_AWS_SECRET_ACCESS_KEY} --profile ${AWS_ROLE_K8S_NAME};"
+            sh "${DOCKER_EXEC} aws eks --region ${AWS_REGION} --profile ${AWS_ROLE_K8S_NAME} update-kubeconfig --name ${CLUSTERNAME};" // atualizando kubeconfig
+            sh "${DOCKER_EXEC} kubectl get ns" // testando retorno dos namespaces
+            /* FIM DAS CONFIGURACOES DO KUBECTL */
+          }
+        }
+        stage("Copiando arquivos e executando dentro do container")
+        {
+          steps {
+            sh "${DOCKER_EXEC} mkdir -p /home/ec2-user/${APP_NAME}"
+            sh "docker cp ${WORKSPACE}/frontInfopel/infopel/esteira/kube/${AMBIENTE}/services/full_deployment.yaml ${BUILD_NUMBER}_${JOB_NAME}_j_kubectl:/home/ec2-user/${APP_NAME}"
+            sh "${DOCKER_EXEC} kubectl apply -f /home/ec2-user/${APP_NAME}/full_deployment.yaml"
+          }
+        }
+        stage("Subindo o servico local")
+        {
+          steps {
+            sh "docker-compose -f ${WORKSPACE}/frontInfopel/infopel/esteira/kube/${AMBIENTE}/docker-compose.yml up -d --build"
+          }
+        }
+        stage("Docker compose down")
+        {
+          steps {
+            sh "docker-compose -f ${WORKSPACE}/frontInfopel/infopel/esteira/kube/${AMBIENTE}/docker-compose.yml down"
+          }
+        }
+        stage("Tag da img local")
+        {
+          steps {
+            sh "docker tag ${APP_NAME}:latest ${IMAGE_BUILD_NAME}"
+            sh "docker image push ${IMAGE_BUILD_NAME}"
+          }
+        }
+        stage("Deploy da imagem local no kubectl")
+        {
+          steps {
+            // alteramos a nova imagem que o pod vai usar
+            sh "${DOCKER_EXEC} kubectl --namespace ${K8S_NAMESPACE} set image --record deployment/${APP_NAME} ${APP_NAME}=${IMAGE_BUILD_NAME}"
+            // aguardamos a troca de imagem pelos pods.
+            sh "${DOCKER_EXEC} kubectl --namespace ${K8S_NAMESPACE} rollout status deployment/${APP_NAME}"
+          }
+        }
+        stage("Publicando imagem latest no jenkins")
+        {
+          steps {
+            // tageamos a nova img enviada como latest
+            sh "docker image tag ${IMAGE_BUILD_NAME} ${ECR_IMAGE}:latest"
+            sh "docker image push ${ECR_IMAGE}:latest"
+          }
+        }
+      }
+}
