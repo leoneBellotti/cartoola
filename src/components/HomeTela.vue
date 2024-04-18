@@ -254,7 +254,7 @@ export default {
             this.selectedTime = this.selectedTime === index ? null : index;
         },
         buscaTimes() {
-            axios.get('https://api.cartola.globo.com/atletas/mercado')
+            axios.get('https://threedtback.onrender.com/cartola')
             .then(response => {
                 this.tableData = response.data.clubes;
                 this.tableAtletas = response.data.atletas;
@@ -265,7 +265,7 @@ export default {
             .catch(error => {
                 console.error('Erro ao carregar os dados:', error);
             });
-            axios.get('https://api.cartola.globo.com/mercado/status')
+            axios.get('https://threedtback.onrender.com/mercadoStatus')
             .then(response => {
                 this.mercado = response.data;
                 this.atualizarTempoRestante();
@@ -274,7 +274,7 @@ export default {
             .catch(error => {
                 console.error('Erro ao carregar os dados:', error);
             });
-            axios.get('https://api.cartola.globo.com/partidas')
+            axios.get('https://threedtback.onrender.com/partidas')
             .then(response => {
                 this.partidas = response.data;
             })
